@@ -30,16 +30,41 @@ export default function SidebarControls({
   onUpdateDepot,
 }) {
   const [newStopName, setNewStopName] = useState('');
+  const [newStopSearch, setNewStopSearch] = useState('');
   const [newStopDemand, setNewStopDemand] = useState(10);
   const [newStopTWStart, setNewStopTWStart] = useState(9.0);
   const [newStopTWEnd, setNewStopTWEnd] = useState(17.0);
+  const [stopSearching, setStopSearching] = useState(false);
+  const [stopError, setStopError] = useState('');
 
   const [newVehicleName, setNewVehicleName] = useState('');
   const [newVehicleCapacity, setNewVehicleCapacity] = useState(30);
 
   const [editDepotName, setEditDepotName] = useState(depot ? depot.name : 'Main Distribution Center');
-  const [editDepotX, setEditDepotX] = useState(depot ? depot.x : 50.0);
-  const [editDepotY, setEditDepotY] = useState(depot ? depot.y : 50.0);
+  const [editDepotSearch, setEditDepotSearch] = useState('');
+  const [depotSearching, setDepotSearching] = useState(false);
+  const [depotError, setDepotError] = useState('');
+
+  // Helper function to geocode location query using Nominatim API
+  const geocodeLocation = async (query) => {
+    try {
+      const response = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=1`, {
+        headers: { 'User-Agent': 'SmartRouteOptimizationConsole/1.0' }
+      });
+      const data = await response.json();
+      if (data && data.length > 0) {
+        return {
+          x: parseFloat(data[0].lon),
+          y: parseFloat(data[0].lat),
+          displayName: data[0].display_name
+        };
+      }
+      return null;
+    } catch (e) {
+      console.error('Geocoding error:', e);
+      return null;
+    }
+  };
 
   // Format decimal hours to 12h/24h string
   const formatTime = (time) => {
@@ -51,25 +76,29 @@ export default function SidebarControls({
     return `${hour12}:${minStr} ${ampm}`;
   };
 
-  const handleCreateStopSubmit = (e) => {
+  const handleCreateStopSubmit = async (e) => {
     e.preventDefault();
-    if (!newStopName) return;
+    if (!newStopSearch) return;
+    setStopError('');
+    setStopSearching(true);
+    const result = await geocodeLocation(newStopSearch);
+    setStopSearching(false);
 
-    // Random coordinates inside 10-90 bound for visual convenience
-    const x = 10 + Math.random() * 80;
-    const y = 10 + Math.random() * 80;
-
-    onAddStop({
-      name: newStopName,
-      x,
-      y,
-      demand: Number(newStopDemand),
-      timeWindowStart: Number(newStopTWStart),
-      timeWindowEnd: Number(newStopTWEnd),
-      serviceTime: 0.25,
-    });
-
-    setNewStopName('');
+    if (result) {
+      onAddStop({
+        name: newStopName || newStopSearch.split(',')[0],
+        x: result.x,
+        y: result.y,
+        demand: Number(newStopDemand),
+        timeWindowStart: Number(newStopTWStart),
+        timeWindowEnd: Number(newStopTWEnd),
+        serviceTime: 0.25,
+      });
+      setNewStopName('');
+      setNewStopSearch('');
+    } else {
+      setStopError('City/Location not found. Please try another search term.');
+    }
   };
 
   const handleCreateVehicleSubmit = (e) => {
@@ -88,54 +117,73 @@ export default function SidebarControls({
     setNewVehicleName('');
   };
 
-  const handleDepotSubmit = (e) => {
+  const handleDepotSubmit = async (e) => {
     e.preventDefault();
-    if (depot) {
+    if (!depot) return;
+    setDepotError('');
+
+    if (editDepotSearch.trim() !== '') {
+      setDepotSearching(true);
+      const result = await geocodeLocation(editDepotSearch);
+      setDepotSearching(false);
+      if (result) {
+        onUpdateDepot({
+          ...depot,
+          name: editDepotName || result.displayName.split(',')[0],
+          x: result.x,
+          y: result.y
+        });
+        setEditDepotSearch('');
+      } else {
+        setDepotError('Location not found. Try another city name.');
+      }
+    } else {
       onUpdateDepot({
         ...depot,
-        name: editDepotName,
-        x: Number(editDepotX),
-        y: Number(editDepotY)
+        name: editDepotName
       });
     }
   };
 
-  // Sync state if depot updates remotely
+  // Sync state if depot name updates remotely
   React.useEffect(() => {
     if (depot) {
       setEditDepotName(depot.name);
-      setEditDepotX(depot.x);
-      setEditDepotY(depot.y);
     }
   }, [depot]);
 
   return (
     <>
-      {/* Depot Configuration */}
+      {/* Start Location Config */}
       <div className="glass-panel sidebar-panel">
         <h2 className="panel-title">
-          <MapPin size={16} /> Depot Configuration
+          <MapPin size={16} /> Start Location (Depot Configuration)
         </h2>
         <form onSubmit={handleDepotSubmit} className="flex-col">
-          <input
-            type="text"
-            value={editDepotName}
-            onChange={(e) => setEditDepotName(e.target.value)}
-            className="input-field"
-            placeholder="Depot Name"
-          />
-          <div className="flex-row mt-1">
-            <div className="flex-col" style={{ flex: 1, gap: '2px' }}>
-              <label className="input-label">Coord X (0-100)</label>
-              <input type="number" step="0.1" value={editDepotX} onChange={(e) => setEditDepotX(e.target.value)} className="input-field" />
-            </div>
-            <div className="flex-col" style={{ flex: 1, gap: '2px' }}>
-              <label className="input-label">Coord Y (0-100)</label>
-              <input type="number" step="0.1" value={editDepotY} onChange={(e) => setEditDepotY(e.target.value)} className="input-field" />
-            </div>
+          <div className="flex-col" style={{ gap: '2px' }}>
+            <label className="input-label">Depot Label Name</label>
+            <input
+              type="text"
+              value={editDepotName}
+              onChange={(e) => setEditDepotName(e.target.value)}
+              className="input-field"
+              placeholder="e.g. Main Distribution Center"
+            />
           </div>
-          <button type="submit" className="btn-outline mt-2" style={{ padding: '0.4rem', fontSize: '0.7rem' }}>
-            Save Depot Settings
+          <div className="flex-col" style={{ gap: '2px' }}>
+            <label className="input-label">Search City / Address</label>
+            <input
+              type="text"
+              value={editDepotSearch}
+              onChange={(e) => setEditDepotSearch(e.target.value)}
+              className="input-field"
+              placeholder="e.g. Noida, India"
+            />
+          </div>
+          {depotSearching && <span style={{ fontSize: '0.65rem', color: 'var(--accent-amber)' }}>Searching coordinates...</span>}
+          {depotError && <span style={{ fontSize: '0.65rem', color: 'var(--accent-rose)' }}>{depotError}</span>}
+          <button type="submit" disabled={depotSearching} className="btn-outline mt-2" style={{ padding: '0.4rem', fontSize: '0.7rem' }}>
+            {depotSearching ? 'Searching...' : 'Save Depot Settings'}
           </button>
         </form>
       </div>
@@ -355,21 +403,35 @@ export default function SidebarControls({
         </form>
       </div>
 
-      {/* Stops management */}
+      {/* Destination locations management */}
       <div className="glass-panel sidebar-panel">
         <h2 className="panel-title">
-          <MapPin size={16} /> Delivery Stops ({stops.length})
+          <MapPin size={16} /> Destination Locations ({stops.length})
         </h2>
 
         <form onSubmit={handleCreateStopSubmit} className="flex-col" style={{ background: 'rgba(255,255,255,0.02)', padding: '1rem', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
-          <span className="input-label">Add Delivery Stop</span>
-          <input
-            type="text"
-            placeholder="Stop Name"
-            value={newStopName}
-            onChange={(e) => setNewStopName(e.target.value)}
-            className="input-field"
-          />
+          <span className="input-label">Add Stop (Destination)</span>
+          <div className="flex-col" style={{ gap: '2px' }}>
+            <label className="input-label">Stop Label Name (Optional)</label>
+            <input
+              type="text"
+              placeholder="e.g. Retailer Alpha"
+              value={newStopName}
+              onChange={(e) => setNewStopName(e.target.value)}
+              className="input-field"
+            />
+          </div>
+          <div className="flex-col" style={{ gap: '2px' }}>
+            <label className="input-label">City Search / Location (Required)</label>
+            <input
+              type="text"
+              placeholder="e.g. Chandigarh, India"
+              value={newStopSearch}
+              onChange={(e) => setNewStopSearch(e.target.value)}
+              className="input-field"
+              required
+            />
+          </div>
           <div className="flex-row">
             <div className="flex-col" style={{ flex: 1, gap: '2px' }}>
               <label className="input-label">Demand(kg)</label>
@@ -384,8 +446,10 @@ export default function SidebarControls({
               <input type="number" step="0.5" value={newStopTWEnd} onChange={(e) => setNewStopTWEnd(e.target.value)} className="input-field" />
             </div>
           </div>
-          <button type="submit" className="btn-neon-indigo" style={{ padding: '0.5rem', marginTop: '0.5rem' }}>
-            Create Stop
+          {stopSearching && <span style={{ fontSize: '0.65rem', color: 'var(--accent-amber)' }}>Searching coordinates...</span>}
+          {stopError && <span style={{ fontSize: '0.65rem', color: 'var(--accent-rose)' }}>{stopError}</span>}
+          <button type="submit" disabled={stopSearching} className="btn-neon-indigo" style={{ padding: '0.5rem', marginTop: '0.5rem' }}>
+            {stopSearching ? 'Searching...' : 'Create Stop'}
           </button>
         </form>
 

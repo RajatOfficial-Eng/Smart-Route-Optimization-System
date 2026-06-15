@@ -14,29 +14,17 @@ L.Icon.Default.mergeOptions({
 
 import { TileLayer } from 'react-leaflet';
 
-// Define real-world bounds (New Delhi region roughly)
-const LAT_MIN = 28.4;
-const LAT_MAX = 28.8;
-const LNG_MIN = 77.0;
-const LNG_MAX = 77.5;
-
-// Convert 0-100 grid to real Lat/Lng
+// Convert 0-100 grid (or raw coords) directly to Lat/Lng (X is Lng, Y is Lat)
 const toLatLng = (x, y) => {
-  return [
-    LAT_MIN + (y / 100.0) * (LAT_MAX - LAT_MIN),
-    LNG_MIN + (x / 100.0) * (LNG_MAX - LNG_MIN)
-  ];
+  return [y, x];
 };
 
-// Convert real Lat/Lng back to 0-100 grid
+// Convert real Lat/Lng back to x (Lng) / y (Lat)
 const toGrid = (lat, lng) => {
-  return [
-    ((lng - LNG_MIN) / (LNG_MAX - LNG_MIN)) * 100.0,
-    ((lat - LAT_MIN) / (LAT_MAX - LAT_MIN)) * 100.0
-  ];
+  return [lng, lat];
 };
 
-// Map click handler to paint traffic zones or roadblocks
+// Map click handler to paint traffic zones, roadblocks, or add stops
 const MapClickHandler = ({ mapMode, onMapClick }) => {
   const map = useMap();
   useEffect(() => {
@@ -44,16 +32,49 @@ const MapClickHandler = ({ mapMode, onMapClick }) => {
       const lat = e.latlng.lat;
       const lng = e.latlng.lng;
       const [x, y] = toGrid(lat, lng);
-      
-      if (x >= 0 && x <= 100 && y >= 0 && y <= 100) {
-        onMapClick(x, y);
-      }
+      onMapClick(x, y);
     };
     map.on('click', handler);
     return () => {
       map.off('click', handler);
     };
   }, [map, mapMode, onMapClick]);
+  return null;
+};
+
+// Dynamic bounds updater to fit depot and stops
+const ChangeBounds = ({ depot, stops }) => {
+  const map = useMap();
+  useEffect(() => {
+    const coords = [];
+    if (depot && depot.x !== undefined && depot.y !== undefined) {
+      coords.push([depot.y, depot.x]);
+    }
+    if (stops && stops.length > 0) {
+      stops.forEach((stop) => {
+        if (stop.x !== undefined && stop.y !== undefined) {
+          coords.push([stop.y, stop.x]);
+        }
+      });
+    }
+
+    if (coords.length > 0) {
+      map.fitBounds(coords, { padding: [50, 50], maxZoom: 14 });
+    }
+  }, [depot, stops, map]);
+
+  return null;
+};
+
+// MapResizeHandler to force Leaflet container recalculation on mount
+const MapResizeHandler = () => {
+  const map = useMap();
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      map.invalidateSize();
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [map]);
   return null;
 };
 
@@ -107,8 +128,6 @@ export default function RouteMap({
   onMapClick,
   simulationTime,
 }) {
-  const bounds = [[0, 0], [100, 100]];
-
   const depotIcon = L.divIcon({
     className: 'custom-depot-marker',
     html: `
@@ -127,7 +146,7 @@ export default function RouteMap({
         <Navigation size={18} className="icon-pulse" style={{ color: 'var(--accent-indigo)' }} />
         <div className="flex-col" style={{ gap: '2px' }}>
           <div className="hud-title">REAL-WORLD SATELLITE LINK ACTIVE</div>
-          <div className="hud-subtitle">OpenStreetMap: New Delhi Logistics Sector</div>
+          <div className="hud-subtitle">OpenStreetMap Logistics Sector</div>
         </div>
       </div>
 
@@ -149,7 +168,8 @@ export default function RouteMap({
       )}
 
       <MapContainer
-        bounds={[[LAT_MIN, LNG_MIN], [LAT_MAX, LNG_MAX]]}
+        center={[28.6, 77.2]}
+        zoom={10}
         style={{ width: '100%', height: '100%' }}
         zoomControl={true}
         attributionControl={true}
@@ -160,6 +180,8 @@ export default function RouteMap({
         />
         
         <MapClickHandler mapMode={mapMode} onMapClick={onMapClick} />
+        <ChangeBounds depot={depot} stops={stops} />
+        <MapResizeHandler />
 
         {/* Depot Marker */}
         {depot && (
@@ -168,7 +190,7 @@ export default function RouteMap({
               <div style={{ padding: '4px', fontSize: '0.75rem', color: 'white' }}>
                 <p style={{ fontWeight: 'bold', fontFamily: 'var(--font-display)', color: 'var(--accent-amber)', marginBottom: '4px' }}>{depot.name}</p>
                 <p style={{ fontSize: '0.65rem', color: 'var(--text-dim)' }}>Distribution Depot Hub</p>
-                <p style={{ fontSize: '0.65rem' }}>Coordinates: [{depot.x.toFixed(1)}, {depot.y.toFixed(1)}]</p>
+                <p style={{ fontSize: '0.65rem' }}>Coordinates: [{depot.x.toFixed(4)}, {depot.y.toFixed(4)}]</p>
               </div>
             </Popup>
           </Marker>
@@ -228,7 +250,7 @@ export default function RouteMap({
             <Circle
               key={zone.id}
               center={toLatLng(zone.x, zone.y)}
-              radius={zone.radius * 440} // 1 grid unit ~ 440m
+              radius={zone.radius * 111320} // zone.radius is in degrees, convert to meters
               pathOptions={{
                 fillColor: zoneColor,
                 fillOpacity: isRoadblock ? 0.35 : 0.2,

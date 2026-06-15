@@ -26,6 +26,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [speedFactor, setSpeedFactor] = useState(0.25);
   const [logs, setLogs] = useState([]);
+  const [lastClickedCoords, setLastClickedCoords] = useState(null);
 
   const simulationRef = useRef(null);
 
@@ -93,13 +94,14 @@ export default function App() {
 
   // Map Click Handler
   const handleMapClick = async (x, y) => {
+    setLastClickedCoords([x, y]);
     if (mapMode === 'roadblock') {
       try {
-        addLog(`Placing roadblock coordinates [${x.toFixed(1)}, ${y.toFixed(1)}]`);
+        addLog(`Placing roadblock coordinates [${x.toFixed(4)}, ${y.toFixed(4)}]`);
         const res = await fetch(`${API_BASE}/traffic`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ x, y, radius: 8.0, severity: 999.0 })
+          body: JSON.stringify({ x, y, radius: 0.027, severity: 999.0 }) // ~2.7km radius roadblock
         });
         const newZone = await res.json();
         setTrafficZones([...trafficZones, newZone]);
@@ -111,11 +113,11 @@ export default function App() {
       }
     } else if (mapMode === 'traffic') {
       try {
-        addLog(`Painting traffic jam zone coordinates [${x.toFixed(1)}, ${y.toFixed(1)}]`);
+        addLog(`Painting traffic jam zone coordinates [${x.toFixed(4)}, ${y.toFixed(4)}]`);
         const res = await fetch(`${API_BASE}/traffic`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ x, y, radius: 10.0, severity: 5.0 })
+          body: JSON.stringify({ x, y, radius: 0.036, severity: 5.0 }) // ~3.5km radius traffic zone
         });
         const newZone = await res.json();
         setTrafficZones([...trafficZones, newZone]);
@@ -128,8 +130,33 @@ export default function App() {
     } else {
       // Add standard stop
       try {
-        const stopName = `Stop ${String.fromCharCode(65 + stops.length)}`;
-        addLog(`Creating delivery stop ${stopName} at coordinate [${x.toFixed(1)}, ${y.toFixed(1)}]`);
+        addLog(`Reverse geocoding click at [${x.toFixed(4)}, ${y.toFixed(4)}]...`);
+        let stopName = `Stop ${String.fromCharCode(65 + stops.length)}`;
+        try {
+          const response = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${y}&lon=${x}&format=json`, {
+            headers: { 'User-Agent': 'SmartRouteOptimizationConsole/1.0' }
+          });
+          const data = await response.json();
+          if (data && data.address) {
+            const address = data.address;
+            const parts = [];
+            const local = address.suburb || address.neighbourhood || address.city_district || address.road;
+            const city = address.city || address.town || address.village || address.county;
+            if (local) parts.push(local);
+            if (city) parts.push(city);
+            if (parts.length > 0) {
+              stopName = parts.join(', ');
+            } else if (data.display_name) {
+              stopName = data.display_name.split(',')[0];
+            }
+          } else if (data && data.display_name) {
+            stopName = data.display_name.split(',')[0];
+          }
+        } catch (e) {
+          console.error('Reverse geocoding error:', e);
+        }
+
+        addLog(`Creating delivery stop: ${stopName} at coordinate [${x.toFixed(4)}, ${y.toFixed(4)}]`);
         const res = await fetch(`${API_BASE}/stops`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -404,6 +431,7 @@ export default function App() {
             onDeleteTraffic={handleDeleteTrafficZone}
             depot={depot}
             onUpdateDepot={handleUpdateDepot}
+            lastClickedCoords={lastClickedCoords}
           />
         </section>
 
